@@ -13,12 +13,18 @@
   "routes": [
     {
       "src": "/api/generate",
-      "dest": "api/generate.py"
+      "dest": "api/generate.py",
+      "methods": ["GET", "POST", "OPTIONS"]
     },
     {
       "src": "/(.*)",
       "dest": "/$1"
     }
-  ]
+  ],
+  "functions": {
+    "api/generate.py": {
+      "maxDuration": 60
+    }
+  }
 }
 

@@ -143,6 +143,8 @@ async def generate_ai_summary(
     repo_name: str, description: Optional[str], readme: Optional[str]
 ) -> Optional[str]:
     """Generate AI summary using Gemini"""
+    import sys
+
     if not GEMINI_API_KEY:
         return None
 
@@ -178,20 +180,28 @@ Summary (max 50 words):"""
                 if len(words) > 60:
                     summary = " ".join(words[:60]) + "..."
 
-                print(f"✓ Used model: {model}")
+                print(f"[OK] Used model: {model} for {repo_name}")
+                sys.stdout.flush()
                 return summary
 
             except Exception as model_error:
                 last_error = model_error
-                print(f"Model {model} failed: {model_error}")
+                error_msg = str(model_error).replace("\n", " ")[:150]
+                print(f"[ERROR] Model {model} failed: {error_msg}")
+                sys.stdout.flush()
                 continue
 
         # All models failed
-        print(f"AI summary generation failed (all models): {last_error}")
+        if last_error:
+            error_msg = str(last_error).replace("\n", " ")[:150]
+            print(f"[WARN] AI summary generation failed (all models): {error_msg}")
+            sys.stdout.flush()
         return None
 
     except Exception as e:
-        print(f"AI summary generation failed: {e}")
+        error_msg = str(e).replace("\n", " ")[:150]
+        print(f"[WARN] AI summary generation error: {error_msg}")
+        sys.stdout.flush()
         return None
 
 
@@ -212,6 +222,7 @@ async def process_generate_request(username: str) -> GenerateResponse:
         raise HTTPException(status_code=400, detail="Username cannot be empty")
 
     try:
+        print(f"[START] Processing request for user: {username}")
         # Step 1: Fetch user profile
         user_data = await fetch_github_user(username)
         user_profile = UserProfile(
@@ -232,19 +243,84 @@ async def process_generate_request(username: str) -> GenerateResponse:
         # Step 2: Fetch repositories
         repos_data = await fetch_github_repos(username)
 
-        # Step 3: Process repositories and generate AI summaries
+        # Step 3: Process repositories and generate AI summaries (in parallel)
         repositories = []
-        for repo in repos_data:
-            # Fetch README for the first repo only (to save time in MVP)
-            readme = None
-            ai_summary = None
+        ai_summaries_count = 0
+        max_ai_summaries = 6  # Limit AI summaries to first 6 repos for performance
 
-            if len(repositories) == 0 and GEMINI_API_KEY:  # Only for first repo
-                readme = await fetch_readme(username, repo["name"])
-                if readme:
-                    ai_summary = await generate_ai_summary(
-                        repo["name"], repo.get("description"), readme
+        # Collect repos that need AI summaries
+        ai_tasks = []
+        for i, repo in enumerate(repos_data):
+            if i < max_ai_summaries and GEMINI_API_KEY:
+                ai_tasks.append((i, repo))
+
+        # Generate AI summaries in parallel
+        ai_results = {}
+        if ai_tasks:
+            import asyncio
+            import sys
+
+            print(
+                f"[INFO] Starting parallel AI generation for {len(ai_tasks)} repositories..."
+            )
+            sys.stdout.flush()
+
+            async def get_ai_summary_for_repo(index, repo):
+                try:
+                    print(
+                        f"[INFO] [{index + 1}/{len(ai_tasks)}] Fetching README for {repo['name']}"
                     )
+                    sys.stdout.flush()
+
+                    readme = await fetch_readme(username, repo["name"])
+                    if readme:
+                        print(
+                            f"[INFO] [{index + 1}/{len(ai_tasks)}] Generating AI summary for {repo['name']}"
+                        )
+                        sys.stdout.flush()
+
+                        summary = await generate_ai_summary(
+                            repo["name"], repo.get("description"), readme
+                        )
+
+                        if summary:
+                            print(
+                                f"[OK] [{index + 1}/{len(ai_tasks)}] AI summary generated for {repo['name']}"
+                            )
+                            sys.stdout.flush()
+
+                        return (index, summary)
+                    else:
+                        print(
+                            f"[SKIP] [{index + 1}/{len(ai_tasks)}] No README found for {repo['name']}"
+                        )
+                        sys.stdout.flush()
+                except Exception as e:
+                    print(
+                        f"[WARN] [{index + 1}/{len(ai_tasks)}] Failed AI summary for {repo['name']}: {str(e)[:100]}"
+                    )
+                    sys.stdout.flush()
+                return (index, None)
+
+            # Run AI generation tasks in parallel
+            results = await asyncio.gather(
+                *[get_ai_summary_for_repo(i, repo) for i, repo in ai_tasks],
+                return_exceptions=True,
+            )
+
+            for result in results:
+                if isinstance(result, tuple) and result[1]:
+                    ai_results[result[0]] = result[1]
+                    ai_summaries_count += 1
+
+            print(
+                f"[INFO] Completed: {ai_summaries_count}/{len(ai_tasks)} AI summaries generated successfully"
+            )
+            sys.stdout.flush()
+
+        # Build repository list with AI summaries
+        for i, repo in enumerate(repos_data):
+            ai_summary = ai_results.get(i)
 
             repository = Repository(
                 id=repo["id"],
@@ -263,6 +339,10 @@ async def process_generate_request(username: str) -> GenerateResponse:
             )
             repositories.append(repository)
 
+        print(
+            f"[INFO] Generated {ai_summaries_count} AI summaries out of {len(repositories)} repositories"
+        )
+
         return GenerateResponse(
             success=True,
             user=user_profile,
@@ -273,4 +353,8 @@ async def process_generate_request(username: str) -> GenerateResponse:
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+
+        error_details = traceback.format_exc()
+        print(f"[ERROR] Exception in process_generate_request: {error_details}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

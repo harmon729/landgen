@@ -1,10 +1,10 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import axios from 'axios'
-import GeneratorForm from '@/components/GeneratorForm'
-import WebsitePreview from '@/components/WebsitePreview'
-import { GenerateResponse } from '@/types'
+import React, { useState } from 'react';
+import axios from 'axios';
+import GeneratorForm from '@/components/GeneratorForm';
+import WebsitePreview from '@/components/WebsitePreview';
+import type { GenerateResponse } from '@/types';
 
 export default function Home() {
   const [loading, setLoading] = useState(false)
@@ -17,15 +17,21 @@ export default function Home() {
     setResult(null)
 
     try {
+      // In development, call backend directly (with CORS support)
+      // In production, use Vercel routes (/api/generate -> api/generate.py)
+      const apiUrl = process.env.NODE_ENV === 'development' 
+        ? 'http://localhost:8000/api/generate'
+        : '/api/generate'
+
       // Call our API endpoint
       const response = await axios.post<GenerateResponse>(
-        '/api/generate',
+        apiUrl,
         { username },
         {
           headers: {
             'Content-Type': 'application/json',
           },
-          timeout: 30000, // 30 second timeout
+          timeout: 600000, // 10 minute timeout
         }
       )
 

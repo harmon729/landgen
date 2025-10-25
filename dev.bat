@@ -52,5 +52,8 @@ echo.
 echo Press Ctrl+C to stop
 echo.
 
+REM Enable Node.js deprecation traces for all child processes
+set NODE_OPTIONS=--trace-deprecation
+
 npm run dev:all
 

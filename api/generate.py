@@ -178,7 +178,7 @@ Summary (max 50 words):"""
         return None
 
 
-@app.post("/api/generate", response_model=GenerateResponse)
+@app.post("/", response_model=GenerateResponse)
 async def generate_website(request: GenerateRequest):
     username = request.username.strip()
     

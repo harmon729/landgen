@@ -1,0 +1,168 @@
+好的，Harmon。这是一个非常棒的项目，我们现在就把它从“想法”变为“可落地的方案”。
+
+作为你的（临时）产品经理和技术架构师，我将为你提供一份结合了产品战略（SPM 视角）和技术实现（SSE 视角）的项目初稿。这份方案将特别关注你即将参加的 AI Hackathon (10月25日) 的短期可行性，以及一个长期的产品蓝图。
+
+-----
+
+### **项目方案初稿：LandGen (v0.1)**
+
+**To:** Harmon Hsu (Xu Haixuan)
+**From:** Gemini (Senior PM / Senior Software Engineer, Google)
+**Date:** 2025年10月24日
+**Subject:** LandGen - 可落地的项目方案与架构
+
+### 1\. 核心愿景 (The Vision) - [SPM 视角]
+
+**我们不是在做一个“网站生成器”，我们是在做一个“AI 网站管家”。**
+
+  * **问题:** 专业人士（如开发者、学者）的个人成就在互联网上是“碎片化”和“静态”的（GitHub, Medium, LinkedIn, Google Scholar）。个人网站一旦建成，就会因为懒得更新而“死亡”。
+  * **解决方案 (LandGen):** 一个 Agentic AI 服务。用户只需授权一次数据源，LandGen 将：
+    1.  **Gen (生成):** 自动为用户生成一个内容感知、设计美观的个人门户。
+    2.  **Land (维护/落地):** 7x24 小时监控数据源，**主动**发现新内容（新项目、新论文、新文章），并**自动/半自动**地将其更新（Land）到用户的个人网站上。
+
+### 2\. 产品定义与 MVP 范围 (The "What") - [SPM 视角]
+
+我们必须进行无情的优先级排序（Ruthless Prioritization）来定义 MVP。
+
+#### P0: Hackathon MVP (目标：48小时内演示核心概念)
+
+  * **核心用户故事:** "作为一名开发者，我输入我的 GitHub 用户名，LandGen 就能为我生成一个展示我 Pinned Repos 的单页网站。"
+  * **关键特性 (Features):**
+    1.  **极简输入:** 只有一个输入框：“输入你的 GitHub 用户名”。
+    2.  **单一连接器 (伪):** 一个后端的 Python 脚本，调用 GitHub API `(api.github.com/users/{username}/repos)` 来 *fetch*（拉取）数据。
+    3.  **单一模板:** 一个硬编码 (Hardcoded) 的前端模板（例如，使用 Next.js 或 Astro 构建的单个页面）。
+    4.  **Gen (AI 亮点):** (可选，但强烈推荐) 调用 LLM API (如 Gemini API) *为其中一个* README.md **自动生成 50 字的摘要**。
+  * **“不做” (Non-Goals):**
+      * **不做**用户登录。
+      * **不做**数据库。
+      * **不做**“Agent 自动更新”。(这个阶段只做“一次性生成”)
+
+#### P1: V1 产品 (目标：可公开发布的“Agent”服务)
+
+  * **核心用户故事:** "作为一名 CS 学生，我可以连接我的 GitHub 和 Medium，LandGen 会自动为我创建一个网站，并在我发布新文章或新项目时，**发邮件问我是否要更新**。"
+  * **关键特性:**
+    1.  **用户系统:** 完整的用户注册和登录（推荐使用 Firebase Auth，最快）。
+    2.  **P0 连接器 (OAuth):**
+          * **GitHub (OAuth):** 读取 Repos, Profile。
+          * **RSS (输入 URL):** 适配 Medium, Substack, 个人博客。
+    3.  **核心 Agent 引擎:**
+          * 一个**调度器 (Scheduler)**（如 Celery, or Google Cloud Scheduler）定期触发“轮询 (Polling)”任务。
+          * 一个**数据库 (DB)** (如 PostgreSQL) 来存储用户数据、Token 和拉取的内容。
+    4.  **“人机协同” (Human-in-the-Loop):** **这是核心！** 当检测到新内容时，*不*自动发布。而是向用户发送一封包含 [一键批准] 按钮的邮件。
+    5.  **部署:** 用户可获得一个 `harmon.landgen.site` 的子域名。
+
+### 3\. 技术架构 (The "How") - [SSE 视角]
+
+这是 V1 产品的推荐架构。这是一个可扩展的、解耦的现代云原生架构。
+
+```
+[ 用户浏览器 ]
+    |
+    v
+[ 1. 前端 (Frontend) ] (Next.js / Vercel)
+    - 仪表盘 (Dashboard): 管理数据连接
+    - 网站生成器: 渲染用户的公开页面 (SSG/ISR)
+    |
+    |<-- API (REST/GraphQL) -->
+    |
+[ 2. 后端 API (Backend API) ] (Python - FastAPI / Google Cloud Run)
+    - /auth: 用户认证 (Firebase Auth)
+    - /connect: 处理 OAuth 回调, 存储 Token (加密!)
+    - /site: 管理网站配置
+    - /content: (只读) 为前端提供已批准的内容
+    |
+    |<-- DB & Queue -->
+    |
+[ 3. 核心数据库 (Data Storage) ]
+    - **PostgreSQL:** (如 Alibaba Cloud RDS / Supabase / Neon) 存储 `Users`, `Sites`, `Connections`, `UnifiedContentItems`
+    - **Redis:** (如 ElastiCache / Upstash) 缓存 & 作为 Celery 的 Broker
+    |
+    v
+[ 4. Agent 引擎 (The "Agent" - 异步) ] (Python - Celery / Google Cloud Tasks)
+    - **Scheduler (Beat):** "每个用户, 每小时轮询一次" -> 将任务放入队列
+    - **Workers (Worker):**
+        1. 从队列中获取任务 (e.g., user_id: 'harmon', source: 'github')
+        2. 从 DB 读取该用户的 `Connection` Token
+        3. 调用外部 API (e.g., GitHub API)
+        4. **[AI]** 将新数据与 `UnifiedContentItems` 表进行 Diff (变更检测)
+        5. **[AI]** 如果有新内容，调用 LLM API 进行总结
+        6. 将新内容存入 DB (标记为 `is_published=false`)
+        7. 触发通知服务
+    |
+    v
+[ 5. 通知服务 (Notification) ] (SendGrid / AWS SES)
+    - "发现新项目 'LandGen', 是否发布? [是] [否]"
+```
+
+### 4\. 核心数据模型 (Data Model) - [SSE 视角]
+
+这是你（护城河1）“数据归一化引擎”的核心。我们需要一个**统一内容模型 (Unified Content Model)**。
+
+**`Users`**
+
+  * `id` (uuid)
+  * `email` (string)
+  * `created_at`
+
+**`Connections`**
+
+  * `id` (uuid)
+  * `user_id` (fk to Users)
+  * `source_type` (enum: 'GITHUB', 'RSS', 'LINKEDIN')
+  * `access_token` (string, **必须加密**\!)
+  * `refresh_token` (string, **必须加密**\!)
+  * `last_polled_at` (timestamp)
+
+**`Sites`**
+
+  * `id` (uuid)
+  * `user_id` (fk to Users)
+  * `subdomain` (string, e.g., "harmon")
+  * `layout_config` (jsonb, e.g., `{"theme": "minimal", "show_projects": true}`)
+
+**`UnifiedContentItems` (最重要的表\!)**
+
+  * `id` (uuid)
+  * `user_id` (fk to Users)
+  * `connection_id` (fk to Connections)
+  * `source_original_id` (string, e.g., GitHub repo ID)
+  * `type` (enum: 'PROJECT', 'ARTICLE', 'EXPERIENCE')
+  * `title` (string)
+  * `description` (string, 可能是 AI 生成的)
+  * `url` (string)
+  * `image_url` (string, 可选)
+  * `published_at` (timestamp, 原始发布时间)
+  * `is_published_on_site` (boolean, **Agent 流程的核心\!**)
+
+### 5\. 里程碑与执行计划 (The Plan) - [SPM + SSE 视角]
+
+**Phase 0: Hackathon (2025年10月25日 - 26日)**
+
+  * [ ] **(SPM)** 明确 Demo 脚本：`输入 -> 点击 -> 生成的网页`。
+  * [ ] **(SSE)** 使用 Next.js 创建一个页面，包含一个输入框和一个用于展示的结果区域。
+  * [ ] **(SSE)** 用 Python (FastAPI) 写一个 *unauthenticated* (无验证) 的 API 路由: `POST /generate`。
+  * [ ] **(SSE)** 该路由调用 GitHub API 和 LLM API (如 `gemini-1.5-pro`)。
+  * [ ] **(SSE)** 将所有内容（前端+后端）部署到 Vercel (它支持 Python Serverless Functions)。
+  * [ ] **(SPM)** 准备 3 分钟的 Pitch 讲稿，**重点是“Agent”的长期愿景，而 Demo 展示的是“Gen”的第一步**。
+
+**Phase 1: V1 - MVP (未来 1-2 个月)**
+
+  * [ ] **(SSE)** 搭建生产级架构 (见第3节)，使用 Firebase Auth 和 PostgreSQL。
+  * [ ] **(SSE)** 实现 GitHub 的完整 OAuth 2.0 流程，安全存储 Tokens。
+  * [ ] **(SSE)** 实现 RSS 爬虫和解析器。
+  * [ ] **(SSE)** 构建 Celery + Redis 异步任务系统，实现 `UnifiedContentItems` 的填充。
+  * [ ] **(SPM/SSE)** 实现邮件通知和“一键批准”逻辑（这需要一个带 token 的 API 路由 `/approve/{item_id}`）。
+  * [ ] **(SPM)** 在你的同学（USTC CS）中招募 10 个种子用户进行内测。
+
+### 6\. 风险与缓解 (The Risks) - [SPM + SSE 视角]
+
+1.  **风险 (技术):** API 依赖。LinkedIn API 几乎不可用。Google Scholar 禁止爬虫。
+      * **缓解:** **拥抱“手动”与“半自动”。** 对于 LinkedIn，允许用户“手动”粘贴他们的工作经历。对于 Google Scholar，提供一个界面让用户“手动”添加他们的论文列表。**不要试图用爬虫对抗 Google**。
+2.  **风险 (产品):** “AI 错乱”。Agent 自动发布了一个用户不想要的、私密的或尴尬的 Repo。
+      * **缓解:** **“人机协同”是不可妥协的底线。** V1 绝不能有“全自动发布”功能。所有更新**必须**由用户批准。信任是第一位的。
+3.  **风险 (成本):** 轮询成千上万的用户会产生高昂的 API 和计算成本。
+      * **缓解:** **从“拉 (Poll)”转向“推 (Push)”。** V2 时，尽可能使用 Webhooks。GitHub Webhooks 可以在有事件（如 new repo）时*主动*通知我们的 API，而不是我们去轮询它。这能将成本降低 99%。
+
+-----
+
+Harmon，这份方案是你的起点。你在 Hackathon 的目标是**用最小的代价验证最大的愿景**。祝你好运。
